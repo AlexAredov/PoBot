@@ -1,27 +1,32 @@
 import logging
 import random
 from aiogram import Bot, Dispatcher, executor, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 
-API_TOKEN = '8031461614:AAG5nEy2LtWtmcjomroTnCQcAl6eTOYbwyQ'
+API_TOKEN = 'YOUR_BOT_TOKEN_HERE'
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 
-# Хранилище мест в памяти
 places = []
+CATEGORIES = ["кафе", "парк", "бар", "выставка", "кино", "другое"]
 
-# Шаги для добавления места
 class AddPlace(StatesGroup):
     name = State()
     category = State()
     description = State()
     location = State()
+
+def category_keyboard():
+    kb = InlineKeyboardMarkup(row_width=2)
+    buttons = [InlineKeyboardButton(text=c, callback_data=f"cat_{c}") for c in CATEGORIES]
+    kb.add(*buttons)
+    return kb
 
 @dp.message_handler(commands=['start'])
 async def start_cmd(message: types.Message):
@@ -36,13 +41,15 @@ async def cmd_add(message: types.Message):
 async def add_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text)
     await AddPlace.next()
-    await message.reply("Какая категория? (кафе, парк, бар, выставка и т.п.)")
+    await message.reply("Выбери категорию:", reply_markup=category_keyboard())
 
-@dp.message_handler(state=AddPlace.category)
-async def add_category(message: types.Message, state: FSMContext):
-    await state.update_data(category=message.text)
+@dp.callback_query_handler(lambda c: c.data.startswith("cat_"), state=AddPlace.category)
+async def process_category(callback_query: types.CallbackQuery, state: FSMContext):
+    category = callback_query.data[4:]
+    await state.update_data(category=category)
     await AddPlace.next()
-    await message.reply("Краткое описание?")
+    await bot.send_message(callback_query.from_user.id, "Краткое описание?", reply_markup=ReplyKeyboardRemove())
+    await callback_query.answer()
 
 @dp.message_handler(state=AddPlace.description)
 async def add_description(message: types.Message, state: FSMContext):
@@ -80,19 +87,21 @@ async def cmd_filter(message: types.Message):
     if not categories:
         await message.reply("Категорий пока нет. Добавь места через /add")
         return
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    for c in categories:
-        kb.add(KeyboardButton(c))
+    kb = InlineKeyboardMarkup(row_width=2)
+    buttons = [InlineKeyboardButton(text=c, callback_data=f"filter_{c}") for c in categories]
+    kb.add(*buttons)
     await message.reply("Выбери категорию:", reply_markup=kb)
 
-@dp.message_handler(lambda message: message.text in [p['category'] for p in places])
-async def filtered_places(message: types.Message):
-    selected = [p for p in places if p['category'] == message.text]
+@dp.callback_query_handler(lambda c: c.data.startswith("filter_"))
+async def filtered_places(callback_query: types.CallbackQuery):
+    selected_category = callback_query.data[7:]
+    selected = [p for p in places if p['category'] == selected_category]
     text = "\n\n".join([
         f"📍 *{p['name']}*\n_{p['description']}_\n{p['location']}"
         for p in selected
     ])
-    await message.reply(text, parse_mode="Markdown", reply_markup=types.ReplyKeyboardRemove())
+    await bot.send_message(callback_query.from_user.id, text or "Ничего не найдено в этой категории", parse_mode="Markdown")
+    await callback_query.answer()
 
 @dp.message_handler(commands=['random'])
 async def cmd_random(message: types.Message):
