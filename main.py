@@ -6,6 +6,7 @@ from aiogram.types import ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButt
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
+import os
 
 API_TOKEN = '8031461614:AAG5nEy2LtWtmcjomroTnCQcAl6eTOYbwyQ'
 
@@ -14,8 +15,11 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 
-# SQLite database setup
-conn = sqlite3.connect("places.db")
+# Ensure /data directory exists
+os.makedirs("/data", exist_ok=True)
+
+# SQLite database setup in Render-persistent directory
+conn = sqlite3.connect("/data/places.db")
 cursor = conn.cursor()
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS places (
