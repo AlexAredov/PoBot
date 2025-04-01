@@ -1,20 +1,38 @@
 import logging
 import random
+import sqlite3
 from aiogram import Bot, Dispatcher, executor, types
-from aiogram.types import ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 
-API_TOKEN = 'YOUR_BOT_TOKEN_HERE'
+API_TOKEN = '8031461614:AAG5nEy2LtWtmcjomroTnCQcAl6eTOYbwyQ'
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 
-places = []
-CATEGORIES = ["кафе", "парк", "бар", "выставка", "кино", "другое"]
+# SQLite database setup
+conn = sqlite3.connect("places.db")
+cursor = conn.cursor()
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS places (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    category TEXT,
+    description TEXT,
+    location TEXT,
+    visited INTEGER DEFAULT 0
+)
+''')
+conn.commit()
+
+CATEGORIES = [
+    "Еда 🍕", "Животные 🙉", "Учеба 📚", "Выставки 🏛️",
+    "Погулять 🚶‍♂️🚶‍♀️", "Клубы 🪩", "Концерты 🎤", "Кино 🍿", "Театры 🎭"
+]
 
 class AddPlace(StatesGroup):
     name = State()
@@ -22,17 +40,33 @@ class AddPlace(StatesGroup):
     description = State()
     location = State()
 
-def category_keyboard():
-    kb = InlineKeyboardMarkup(row_width=2)
-    buttons = [InlineKeyboardButton(text=c, callback_data=f"cat_{c}") for c in CATEGORIES]
-    kb.add(*buttons)
+class EditPlace(StatesGroup):
+    name = State()
+    field = State()
+    new_value = State()
+
+def reply_category_keyboard():
+    kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    for cat in CATEGORIES:
+        kb.add(KeyboardButton(cat))
+    return kb
+
+def main_menu():
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.row(KeyboardButton('Добавить'), KeyboardButton('Показать все'))
+    kb.row(KeyboardButton('Категории'), KeyboardButton('Рандом'))
+    kb.row(KeyboardButton('Удалить'), KeyboardButton('Изменить'))
+    kb.add(KeyboardButton('Посетили'))
     return kb
 
 @dp.message_handler(commands=['start'])
 async def start_cmd(message: types.Message):
-    await message.reply("Привет! Я помогу тебе выбрать место для свидания 💘\n\nДоступные команды:\n/add — добавить место\n/list — посмотреть все\n/filter — выбрать по категории\n/random — случайное место")
+    await message.reply(
+        "Привет! Я помогу тебе выбрать место для свидания 💘",
+        reply_markup=main_menu()
+    )
 
-@dp.message_handler(commands=['add'])
+@dp.message_handler(lambda message: message.text == 'Добавить')
 async def cmd_add(message: types.Message):
     await AddPlace.name.set()
     await message.reply("Как называется место?")
@@ -41,76 +75,134 @@ async def cmd_add(message: types.Message):
 async def add_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text)
     await AddPlace.next()
-    await message.reply("Выбери категорию:", reply_markup=category_keyboard())
+    await message.reply("Выбери категорию:", reply_markup=reply_category_keyboard())
 
-@dp.callback_query_handler(lambda c: c.data.startswith("cat_"), state=AddPlace.category)
-async def process_category(callback_query: types.CallbackQuery, state: FSMContext):
-    category = callback_query.data[4:]
+@dp.message_handler(state=AddPlace.category)
+async def add_category(message: types.Message, state: FSMContext):
+    category = message.text
+    if category not in CATEGORIES:
+        await message.reply("Пожалуйста, выбери категорию из кнопок ниже:", reply_markup=reply_category_keyboard())
+        return
     await state.update_data(category=category)
     await AddPlace.next()
-    await bot.send_message(callback_query.from_user.id, "Краткое описание?", reply_markup=ReplyKeyboardRemove())
-    await callback_query.answer()
+    await message.reply("Краткое описание?", reply_markup=ReplyKeyboardRemove())
 
 @dp.message_handler(state=AddPlace.description)
 async def add_description(message: types.Message, state: FSMContext):
     await state.update_data(description=message.text)
     await AddPlace.next()
-    await message.reply("Где находится место? (адрес или ссылка на карту)")
+    await message.reply("Ссылка на место")
 
 @dp.message_handler(state=AddPlace.location)
 async def add_location(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    place = {
-        'name': data['name'],
-        'category': data['category'],
-        'description': data['description'],
-        'location': message.text
-    }
-    places.append(place)
+    cursor.execute("INSERT INTO places (name, category, description, location) VALUES (?, ?, ?, ?)",
+                   (data['name'], data['category'], data['description'], message.text))
+    conn.commit()
     await state.finish()
-    await message.reply("Место добавлено! ❤️")
+    await message.reply("Место добавлено! ❤️", reply_markup=main_menu())
 
-@dp.message_handler(commands=['list'])
+@dp.message_handler(lambda message: message.text == 'Показать все')
 async def cmd_list(message: types.Message):
+    cursor.execute("SELECT id, name, category, description, location, visited FROM places")
+    places = cursor.fetchall()
     if not places:
-        await message.reply("Пока что мест нет. Добавь что-нибудь с помощью /add")
+        await message.reply("Пока что мест нет. Добавь что-нибудь с помощью 'Добавить'")
     else:
         text = "\n\n".join([
-            f"📍 *{p['name']}* ({p['category']})\n_{p['description']}_\n{p['location']}"
+            f"📍 *{p[1]}* ({p[2]}){' ✅' if p[5] else ''}\n_{p[3]}_\n{p[4]}\nID: {p[0]}"
             for p in places
         ])
         await message.reply(text, parse_mode="Markdown")
 
-@dp.message_handler(commands=['filter'])
+@dp.message_handler(lambda message: message.text == 'Категории')
 async def cmd_filter(message: types.Message):
-    categories = list(set([p['category'] for p in places]))
+    cursor.execute("SELECT DISTINCT category FROM places")
+    categories = [row[0] for row in cursor.fetchall()]
     if not categories:
-        await message.reply("Категорий пока нет. Добавь места через /add")
+        await message.reply("Категорий пока нет. Добавь места через 'Добавить'")
         return
-    kb = InlineKeyboardMarkup(row_width=2)
-    buttons = [InlineKeyboardButton(text=c, callback_data=f"filter_{c}") for c in categories]
-    kb.add(*buttons)
+    kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    for c in categories:
+        kb.add(KeyboardButton(c))
     await message.reply("Выбери категорию:", reply_markup=kb)
 
-@dp.callback_query_handler(lambda c: c.data.startswith("filter_"))
-async def filtered_places(callback_query: types.CallbackQuery):
-    selected_category = callback_query.data[7:]
-    selected = [p for p in places if p['category'] == selected_category]
-    text = "\n\n".join([
-        f"📍 *{p['name']}*\n_{p['description']}_\n{p['location']}"
-        for p in selected
-    ])
-    await bot.send_message(callback_query.from_user.id, text or "Ничего не найдено в этой категории", parse_mode="Markdown")
-    await callback_query.answer()
-
-@dp.message_handler(commands=['random'])
-async def cmd_random(message: types.Message):
-    if not places:
-        await message.reply("Пока нет мест. Добавь что-нибудь через /add")
+@dp.message_handler(lambda message: message.text in CATEGORIES)
+async def filtered_places(message: types.Message):
+    category = message.text
+    cursor.execute("SELECT name, description, location FROM places WHERE category = ?", (category,))
+    selected = cursor.fetchall()
+    if selected:
+        text = "\n\n".join([
+            f"📍 *{p[0]}*\n_{p[1]}_\n{p[2]}"
+            for p in selected
+        ])
+        await message.reply(text, parse_mode="Markdown", reply_markup=main_menu())
     else:
-        p = random.choice(places)
-        text = f"❤️ *{p['name']}* ({p['category']})\n_{p['description']}_\n{p['location']}"
+        await message.reply("Ничего не найдено в этой категории", reply_markup=main_menu())
+
+@dp.message_handler(lambda message: message.text == 'Рандом')
+async def cmd_random(message: types.Message):
+    cursor.execute("SELECT name, category, description, location FROM places")
+    all_places = cursor.fetchall()
+    if not all_places:
+        await message.reply("Пока нет мест. Добавь что-нибудь через 'Добавить'")
+    else:
+        p = random.choice(all_places)
+        text = f"❤️ *{p[0]}* ({p[1]})\n_{p[2]}_\n{p[3]}"
         await message.reply(text, parse_mode="Markdown")
+
+@dp.message_handler(lambda message: message.text == 'Удалить')
+async def delete_place(message: types.Message):
+    await message.reply("Введи ID места, которое хочешь удалить")
+
+@dp.message_handler(lambda message: message.text.isdigit() and int(message.text) > 0)
+async def confirm_delete(message: types.Message):
+    cursor.execute("DELETE FROM places WHERE id = ?", (int(message.text),))
+    conn.commit()
+    await message.reply("Удалено (если ID был верным)", reply_markup=main_menu())
+
+@dp.message_handler(lambda message: message.text == 'Посетили')
+async def mark_visited_prompt(message: types.Message):
+    await message.reply("Введи ID места, которое ты уже посетил")
+
+@dp.message_handler(lambda message: message.text.startswith("visit "))
+async def mark_visited(message: types.Message):
+    try:
+        place_id = int(message.text.split()[1])
+        cursor.execute("UPDATE places SET visited = 1 WHERE id = ?", (place_id,))
+        conn.commit()
+        await message.reply("Отмечено как посещенное ✅")
+    except:
+        await message.reply("Ошибка при попытке отметить место")
+
+@dp.message_handler(lambda message: message.text == 'Изменить')
+async def start_edit(message: types.Message):
+    await message.reply("Введи ID места, которое хочешь изменить")
+    await EditPlace.name.set()
+
+@dp.message_handler(state=EditPlace.name)
+async def get_edit_id(message: types.Message, state: FSMContext):
+    await state.update_data(id=message.text)
+    await EditPlace.next()
+    await message.reply("Что ты хочешь изменить? (name, category, description, location)")
+
+@dp.message_handler(state=EditPlace.field)
+async def get_edit_field(message: types.Message, state: FSMContext):
+    await state.update_data(field=message.text)
+    await EditPlace.next()
+    await message.reply("На что заменить?")
+
+@dp.message_handler(state=EditPlace.new_value)
+async def update_value(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    try:
+        cursor.execute(f"UPDATE places SET {data['field']} = ? WHERE id = ?", (message.text, data['id']))
+        conn.commit()
+        await message.reply("Изменено успешно ✅", reply_markup=main_menu())
+    except:
+        await message.reply("Произошла ошибка при изменении")
+    await state.finish()
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
