@@ -1,0 +1,4 @@
+app = "date-idea-bot"
+
+[env]
+API_TOKEN = "YOUR_BOT_TOKEN_HERE"
