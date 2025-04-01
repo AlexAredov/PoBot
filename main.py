@@ -6,6 +6,7 @@ from aiogram.types import ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButt
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
+import os
 
 API_TOKEN = '8031461614:AAG5nEy2LtWtmcjomroTnCQcAl6eTOYbwyQ'
 
@@ -14,8 +15,11 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 
-# SQLite setup
-conn = sqlite3.connect("places.db")
+# Ensure /data directory exists
+os.makedirs("/data", exist_ok=True)
+
+# SQLite database setup in Render-persistent directory
+conn = sqlite3.connect("/data/places.db")
 cursor = conn.cursor()
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS places (
@@ -41,7 +45,11 @@ class AddPlace(StatesGroup):
     location = State()
 
 class EditPlace(StatesGroup):
+<<<<<<< HEAD
     place_id = State()
+=======
+    name = State()
+>>>>>>> parent of 07c87f5 (аща)
     field = State()
     new_value = State()
 
@@ -105,6 +113,7 @@ async def add_location(message: types.Message, state: FSMContext):
 @dp.message_handler(lambda message: message.text == 'Показать все')
 async def cmd_list(message: types.Message):
     cursor.execute("SELECT id, name, category, description, location, visited FROM places")
+<<<<<<< HEAD
     records = cursor.fetchall()
     if not records:
         await message.reply("Пока что мест нет. Добавь что-нибудь с помощью 'Добавить'")
@@ -112,6 +121,15 @@ async def cmd_list(message: types.Message):
         text = "\n\n".join([
             f"📍 *{r[1]}* ({r[2]}) {'✅' if r[5] else ''}\n_{r[3]}_\n{r[4]}\nID: {r[0]}"
             for r in records
+=======
+    places = cursor.fetchall()
+    if not places:
+        await message.reply("Пока что мест нет. Добавь что-нибудь с помощью 'Добавить'")
+    else:
+        text = "\n\n".join([
+            f"📍 *{p[1]}* ({p[2]}){' ✅' if p[5] else ''}\n_{p[3]}_\n{p[4]}\nID: {p[0]}"
+            for p in places
+>>>>>>> parent of 07c87f5 (аща)
         ])
         await message.reply(text, parse_mode="Markdown")
 
@@ -127,6 +145,7 @@ async def cmd_filter(message: types.Message):
         kb.add(KeyboardButton(c))
     await message.reply("Выбери категорию:", reply_markup=kb)
 
+<<<<<<< HEAD
 @dp.message_handler(lambda message: message.text == 'Удалить')
 async def delete_prompt(message: types.Message):
     await message.reply("Введи ID места, которое нужно удалить")
@@ -173,17 +192,84 @@ async def edit_apply(message: types.Message, state: FSMContext):
     conn.commit()
     await state.finish()
     await message.reply("Изменения сохранены ✅", reply_markup=main_menu())
+=======
+@dp.message_handler(lambda message: message.text in CATEGORIES)
+async def filtered_places(message: types.Message):
+    category = message.text
+    cursor.execute("SELECT name, description, location FROM places WHERE category = ?", (category,))
+    selected = cursor.fetchall()
+    if selected:
+        text = "\n\n".join([
+            f"📍 *{p[0]}*\n_{p[1]}_\n{p[2]}"
+            for p in selected
+        ])
+        await message.reply(text, parse_mode="Markdown", reply_markup=main_menu())
+    else:
+        await message.reply("Ничего не найдено в этой категории", reply_markup=main_menu())
+>>>>>>> parent of 07c87f5 (аща)
 
 @dp.message_handler(lambda message: message.text == 'Рандом')
 async def cmd_random(message: types.Message):
     cursor.execute("SELECT name, category, description, location FROM places")
-    records = cursor.fetchall()
-    if not records:
+    all_places = cursor.fetchall()
+    if not all_places:
         await message.reply("Пока нет мест. Добавь что-нибудь через 'Добавить'")
     else:
-        r = random.choice(records)
-        text = f"❤️ *{r[0]}* ({r[1]})\n_{r[2]}_\n{r[3]}"
+        p = random.choice(all_places)
+        text = f"❤️ *{p[0]}* ({p[1]})\n_{p[2]}_\n{p[3]}"
         await message.reply(text, parse_mode="Markdown")
+
+@dp.message_handler(lambda message: message.text == 'Удалить')
+async def delete_place(message: types.Message):
+    await message.reply("Введи ID места, которое хочешь удалить")
+
+@dp.message_handler(lambda message: message.text.isdigit() and int(message.text) > 0)
+async def confirm_delete(message: types.Message):
+    cursor.execute("DELETE FROM places WHERE id = ?", (int(message.text),))
+    conn.commit()
+    await message.reply("Удалено (если ID был верным)", reply_markup=main_menu())
+
+@dp.message_handler(lambda message: message.text == 'Посетили')
+async def mark_visited_prompt(message: types.Message):
+    await message.reply("Введи ID места, которое ты уже посетил")
+
+@dp.message_handler(lambda message: message.text.startswith("visit "))
+async def mark_visited(message: types.Message):
+    try:
+        place_id = int(message.text.split()[1])
+        cursor.execute("UPDATE places SET visited = 1 WHERE id = ?", (place_id,))
+        conn.commit()
+        await message.reply("Отмечено как посещенное ✅")
+    except:
+        await message.reply("Ошибка при попытке отметить место")
+
+@dp.message_handler(lambda message: message.text == 'Изменить')
+async def start_edit(message: types.Message):
+    await message.reply("Введи ID места, которое хочешь изменить")
+    await EditPlace.name.set()
+
+@dp.message_handler(state=EditPlace.name)
+async def get_edit_id(message: types.Message, state: FSMContext):
+    await state.update_data(id=message.text)
+    await EditPlace.next()
+    await message.reply("Что ты хочешь изменить? (name, category, description, location)")
+
+@dp.message_handler(state=EditPlace.field)
+async def get_edit_field(message: types.Message, state: FSMContext):
+    await state.update_data(field=message.text)
+    await EditPlace.next()
+    await message.reply("На что заменить?")
+
+@dp.message_handler(state=EditPlace.new_value)
+async def update_value(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    try:
+        cursor.execute(f"UPDATE places SET {data['field']} = ? WHERE id = ?", (message.text, data['id']))
+        conn.commit()
+        await message.reply("Изменено успешно ✅", reply_markup=main_menu())
+    except:
+        await message.reply("Произошла ошибка при изменении")
+    await state.finish()
 
 if __name__ == '__main__':
     import asyncio
