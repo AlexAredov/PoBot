@@ -186,4 +186,21 @@ async def cmd_random(message: types.Message):
         await message.reply(text, parse_mode="Markdown")
 
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    import threading
+    import asyncio
+    from aiohttp import web
+
+    async def start_bot():
+        await asyncio.sleep(1)
+        executor.start_polling(dp, skip_updates=True)
+
+    async def handle(request):
+        return web.Response(text="Bot is running.")
+
+    def run_web():
+        app = web.Application()
+        app.router.add_get("/", handle)
+        web.run_app(app, port=10000)
+
+    threading.Thread(target=lambda: asyncio.run(start_bot())).start()
+    run_web()
