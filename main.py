@@ -179,6 +179,7 @@ async def edit_field_prompt(message: types.Message, state: FSMContext):
     await EditPlace.next()
     await message.reply("Что изменить? (name, category, description, location)")
 
+
 @dp.message_handler(state=EditPlace.field)
 async def edit_value_prompt(message: types.Message, state: FSMContext):
     await state.update_data(field=message.text)
